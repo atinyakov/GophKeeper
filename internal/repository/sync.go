@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/atinyakov/GophKeeper/internal/models"
+	"github.com/lib/pq"
 )
 
 // PostgresSyncService implements secret synchronization operations against a PostgreSQL database.
@@ -191,7 +192,8 @@ func (s *PostgresSyncService) UpsertSecrets(ctx context.Context, userID string, 
 // Returns an error if the delete operation fails.
 func (s *PostgresSyncService) DeleteSecrets(ctx context.Context, userID string, ids []string) error {
 	query := `DELETE FROM secrets WHERE user_login = $1 AND id = ANY($2)`
-	_, err := s.DB.ExecContext(ctx, query, userID, ids)
+	// pq.Array turns []string into a driver.Valuer that marshals into TEXT[]
+	_, err := s.DB.ExecContext(ctx, query, userID, pq.Array(ids))
 	return err
 }
 
