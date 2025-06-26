@@ -1,0 +1,33 @@
+name: go test and coverage
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Install dependencies
+        run: go mod tidy
+
+      - name: Run tests with coverage (excluding mocks folder)
+        run: |
+          go test -v $(go list ./... | grep -v "/mocks|/cmd") -coverprofile=coverage.out
+
+      - name: Filter coverage report to exclude mocks and proto-generated files
+        run: grep -v -E "(mocks/|.pb.go)" coverage.out > coverage_filtered.out
+
+      - name: Display coverage report
+        run: go tool cover -func=coverage_filtered.out
