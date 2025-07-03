@@ -9,12 +9,12 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
-func setupAuthMock(t *testing.T) (*PostgresAuthService, sqlmock.Sqlmock, func()) {
+func setupAuthMock(t *testing.T) (*PostgresAuthRepository, sqlmock.Sqlmock, func()) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("failed to open sqlmock database: %v", err)
 	}
-	service := NewPostgresAuthService(db)
+	service := NewPostgresAuthRepository(db)
 	cleanup := func() { db.Close() }
 	return service, mock, cleanup
 }

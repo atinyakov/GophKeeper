@@ -119,41 +119,55 @@ func TestAddGetDelete(t *testing.T) {
 }
 
 func TestEditAndList(t *testing.T) {
-	// setup storage
-	ls := &LocalStorage{}
-	nonce := make([]byte, fakeAEAD{}.NonceSize())
+	// prepare fake AEAD and storage
+	ls := &LocalStorage{deleted: make(map[string]bool)}
+	aead := fakeAEAD{}
+	nonce := make([]byte, aead.NonceSize())
+
 	// add secret with plaintext "hello"
 	plain := []byte("hello")
-	cipherData := fakeAEAD{}.Seal(nil, nonce, plain, nil)
-	ls.Add(Secret{ID: "1", Type: "x", Data: base64.StdEncoding.EncodeToString(cipherData), Comment: "old", Version: 1})
+	cipherData := aead.Seal(nonce, nonce, plain, nil)
+	ls.Add(Secret{
+		ID:      "1",
+		Type:    "x",
+		Data:    base64.StdEncoding.EncodeToString(cipherData),
+		Comment: "old",
+		Version: 1,
+	})
 
-	// capture output
-
-	stdout := os.Stdout
+	// capture stdout
+	orig := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	// edit secret
+	// perform edit — now passing []byte for rawData
 	timeBefore := time.Now().Unix()
-	if !ls.Edit("1", "world", "newc", fakeAEAD{}, nonce) {
-		t.Fatalf("Edit failed")
+	if !ls.Edit("1", []byte("world"), "newc", aead) {
+		t.Fatal("Edit failed")
 	}
 
-	// list
-	ls.List(fakeAEAD{}, nonce)
+	// list to stdout
+	ls.List(aead)
 
-	// restore stdout and read
+	// restore and read
 	w.Close()
-	os.Stdout = stdout
-	outBytes, _ := io.ReadAll(r)
-	output := string(outBytes)
+	os.Stdout = orig
+	out, _ := io.ReadAll(r)
+	output := string(out)
 
 	if !strings.Contains(output, "ID: 1") || !strings.Contains(output, "Data: world") {
-		t.Errorf("List output missing edited data: %s", output)
+		t.Errorf("List output missing edited data: %q", output)
 	}
-	// verify version updated
-	s2 := ls.Get("1")
-	if s2 == nil || s2.Comment != "newc" || s2.Version < timeBefore {
-		t.Errorf("Edit did not update comment/version: %+v", s2)
+
+	// verify comment and version updated
+	sec := ls.Get("1")
+	if sec == nil {
+		t.Fatal("Get returned nil after edit")
+	}
+	if sec.Comment != "newc" {
+		t.Errorf("expected comment=newc, got %q", sec.Comment)
+	}
+	if sec.Version < timeBefore {
+		t.Errorf("expected Version >= %d, got %d", timeBefore, sec.Version)
 	}
 }

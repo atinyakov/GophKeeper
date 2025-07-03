@@ -23,6 +23,8 @@ type Secret struct {
 	Comment string `json:"comment"`
 	// Version is the sync version number for concurrency control.
 	Version int64 `json:"version"`
+	// Deleted
+	Deleted bool `json:"deleted"`
 }
 
 // SecretType defines the set of valid secret type identifiers.

@@ -25,7 +25,7 @@ var (
 )
 
 // repl runs the interactive shell loop, accepting commands to manage secrets.
-func repl(client *http.Client, baseURL string, ls *storage.LocalStorage, aead cipher.AEAD, nonce []byte) {
+func repl(client *http.Client, baseURL string, ls *storage.LocalStorage, aead cipher.AEAD) {
 	storage.StartAutoSync(client, baseURL, ls)
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -44,11 +44,15 @@ func repl(client *http.Client, baseURL string, ls *storage.LocalStorage, aead ci
 		case "help":
 			fmt.Println("Available commands: help, add, list, get <id>, delete <id>, edit <id>, exit")
 		case "add":
-			sec := storage.PromptForSecret(aead, nonce)
+			sec := storage.PromptForSecret(aead)
 			ls.Add(sec)
-			_ = ls.Save()
+			if err := ls.Save(); err != nil {
+				fmt.Println("Failed to save local store:", err)
+			}
+
 		case "list":
-			ls.List(aead, nonce)
+			ls.List(aead)
+
 		case "get":
 			if len(args) < 2 {
 				fmt.Println("Usage: get <id>")
@@ -61,28 +65,36 @@ func repl(client *http.Client, baseURL string, ls *storage.LocalStorage, aead ci
 				b, _ := json.MarshalIndent(sec, "", "  ")
 				fmt.Println(string(b))
 			}
+
 		case "delete":
 			if len(args) < 2 {
 				fmt.Println("Usage: delete <id>")
 				continue
 			}
-			if ls.Delete(args[1]) {
-				_ = ls.Save()
-				fmt.Println("Secret deleted")
-			} else {
+			if !ls.Delete(args[1]) {
 				fmt.Println("Secret not found")
+				continue
 			}
+			if err := ls.Save(); err != nil {
+				fmt.Println("Failed to save local store:", err)
+			} else {
+				fmt.Println("Secret deleted")
+			}
+
 		case "edit":
 			if len(args) < 2 {
 				fmt.Println("Usage: edit <id>")
 				continue
 			}
-			newData, newComment := storage.PromptEditSecret()
-			if ls.Edit(args[1], newData, newComment, aead, nonce) {
-				_ = ls.Save()
-				fmt.Println("Secret updated")
-			} else {
+			raw, comment := storage.PromptEditSecret()
+			if !ls.Edit(args[1], raw, comment, aead) {
 				fmt.Println("Secret not found")
+				continue
+			}
+			if err := ls.Save(); err != nil {
+				fmt.Println("Failed to save local store:", err)
+			} else {
+				fmt.Println("Secret updated")
 			}
 		case "exit":
 			fmt.Println("Bye")
@@ -135,16 +147,16 @@ func main() {
 		ls := &storage.LocalStorage{}
 		_ = ls.Load()
 
-		certPEM, err := os.ReadFile(certFile)
+		keyPEM, err := os.ReadFile(keyFile)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalf("reading client key: %v", err)
 		}
-		aead, nonce, err := storage.NewAEADFromPEM(certPEM)
+		aead, err := storage.NewAEADFromKeyPEM(keyPEM)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalf("deriving AEAD from private key: %v", err)
 		}
 
-		repl(client, baseURL, ls, aead, nonce)
+		repl(client, baseURL, ls, aead)
 	default:
 		log.Fatalf("unknown command: %s", cmd)
 	}

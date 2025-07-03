@@ -1,3 +1,4 @@
+// Package http provides HTTP handlers for secret synchronization.
 package http_test
 
 import (
@@ -16,10 +17,10 @@ import (
 
 // fakeSyncService records calls and returns preconfigured results.
 type fakeSyncService struct {
-	called          bool
-	receivedUserID  string
-	receivedSecrets []models.Secret
-	receivedVersion int64
+	called           bool
+	receivedUserID   string
+	receivedSecrets  []models.Secret
+	receivedVersions map[string]int64
 
 	result map[string]any
 	err    error
@@ -29,12 +30,12 @@ func (f *fakeSyncService) Sync(
 	ctx context.Context,
 	userID string,
 	secrets []models.Secret,
-	version int64,
+	versions map[string]int64,
 ) (map[string]any, error) {
 	f.called = true
 	f.receivedUserID = userID
 	f.receivedSecrets = secrets
-	f.receivedVersion = version
+	f.receivedVersions = versions
 	return f.result, f.err
 }
 
@@ -57,7 +58,10 @@ func TestSyncHandler_ServiceError(t *testing.T) {
 	fake := &fakeSyncService{err: errors.New("sync failed")}
 	h := &handler.SyncHandler{SyncService: fake}
 
-	payload := map[string]any{"secrets": []models.Secret{}, "last_known_version": 0}
+	payload := map[string]any{
+		"secrets":  []models.Secret{},
+		"versions": map[string]int64{},
+	}
 	b, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/sync", bytes.NewReader(b))
 	w := httptest.NewRecorder()
@@ -73,11 +77,11 @@ func TestSyncHandler_ServiceError(t *testing.T) {
 }
 
 func TestSyncHandler_Success(t *testing.T) {
-	// Prepare the fake result
 	wantVersion := int64(42)
 	wantSecrets := []models.Secret{
 		{ID: "id1", Type: "t1", Data: "d1", Comment: "c1", Version: 1},
 	}
+	wantVersions := map[string]int64{"id1": 1}
 	fake := &fakeSyncService{
 		result: map[string]any{
 			"version": wantVersion,
@@ -86,19 +90,16 @@ func TestSyncHandler_Success(t *testing.T) {
 	}
 	h := &handler.SyncHandler{SyncService: fake}
 
-	// Build the request body
 	reqBody := map[string]any{
-		"secrets":            wantSecrets,
-		"last_known_version": wantVersion,
+		"secrets":  wantSecrets,
+		"versions": wantVersions,
 	}
 	b, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest(http.MethodPost, "/api/sync", bytes.NewReader(b))
 	w := httptest.NewRecorder()
 
-	// Call handler
 	h.Sync(w, req)
 
-	// Check status & headers
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d; want %d", w.Code, http.StatusOK)
 	}
@@ -106,7 +107,6 @@ func TestSyncHandler_Success(t *testing.T) {
 		t.Errorf("Content-Type = %q; want %q", ct, "application/json")
 	}
 
-	// Decode into a struct so we get concrete []models.Secret
 	var resp struct {
 		Version int64           `json:"version"`
 		Secrets []models.Secret `json:"secrets"`
@@ -115,7 +115,6 @@ func TestSyncHandler_Success(t *testing.T) {
 		t.Fatalf("failed to decode response JSON: %v", err)
 	}
 
-	// Validate payload
 	if resp.Version != wantVersion {
 		t.Errorf("version = %d; want %d", resp.Version, wantVersion)
 	}
@@ -123,14 +122,13 @@ func TestSyncHandler_Success(t *testing.T) {
 		t.Errorf("secrets = %+v; want %+v", resp.Secrets, wantSecrets)
 	}
 
-	// Ensure service was called correctly
 	if !fake.called {
 		t.Error("expected SyncService.Sync to be called")
 	}
-	if fake.receivedVersion != wantVersion {
-		t.Errorf("receivedVersion = %d; want %d", fake.receivedVersion, wantVersion)
-	}
 	if !reflect.DeepEqual(fake.receivedSecrets, wantSecrets) {
 		t.Errorf("receivedSecrets = %+v; want %+v", fake.receivedSecrets, wantSecrets)
+	}
+	if !reflect.DeepEqual(fake.receivedVersions, wantVersions) {
+		t.Errorf("receivedVersions = %+v; want %+v", fake.receivedVersions, wantVersions)
 	}
 }

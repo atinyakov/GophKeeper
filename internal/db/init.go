@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS secrets (
     type TEXT NOT NULL,
     data BYTEA NOT NULL,
     comment TEXT,
-    version BIGINT NOT NULL
+    version BIGINT NOT NULL,
+    deleted BOOLEAN NOT NULL DEFAULT FALSE
 );
 `
 

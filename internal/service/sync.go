@@ -16,11 +16,15 @@ type SyncRepository interface {
 	// GetSecretsByUser retrieves all secrets belonging to the specified user.
 	GetSecretsByUser(ctx context.Context, userID string) ([]models.Secret, error)
 	// UpsertSecrets inserts new secrets or updates existing ones for the given user.
-	UpsertSecrets(ctx context.Context, userID string, secrets []models.Secret) error
+	// UpsertSecrets(ctx context.Context, userID string, secrets []models.Secret) error
 	// DeleteSecrets removes the secrets with the given IDs for the specified user.
 	DeleteSecrets(ctx context.Context, userID string, ids []string) error
 	// GetSecretByID fetches a single secret by ID for the specified user.
 	GetSecretByID(ctx context.Context, userID string, id string) (*models.Secret, error)
+	// UpsertIfNewer
+	UpsertIfNewer(ctx context.Context, userID string, secrets []models.Secret) ([]string, []string, error)
+	// GetNewerSecrets
+	GetNewerSecrets(ctx context.Context, userID string, versions map[string]int64) ([]models.Secret, error)
 }
 
 // SyncService implements synchronization business logic for user secrets.
@@ -36,29 +40,50 @@ func NewSyncService(repo SyncRepository) *SyncService {
 }
 
 // Sync synchronizes client-provided secrets with the data store.
-// If the client's lastKnownVersion is behind the store's current version,
-// it returns the latest secrets from the store. Otherwise, it upserts
-// the provided secrets and returns them.
-// Returns a map with keys "version" (int64) and "secrets" ([]models.Secret).
-func (s *SyncService) Sync(ctx context.Context, userID string, secrets []models.Secret, lastKnownVersion int64) (map[string]any, error) {
-	currentVersion, err := s.repo.GetMaxVersion(ctx, userID)
+// For each secret, the server compares versions and updates only if the incoming version is newer.
+// Deleted secrets are removed; version conflicts are resolved by keeping the higher version.
+func (s *SyncService) Sync(ctx context.Context, userID string, secrets []models.Secret, clientVersions map[string]int64) (map[string]any, error) {
+	var toUpsert []models.Secret
+	var toDelete []string
+	for _, s := range secrets {
+		if s.Deleted {
+			toDelete = append(toDelete, s.ID)
+		} else {
+			toUpsert = append(toUpsert, s)
+		}
+	}
+
+	if len(toDelete) > 0 {
+		if err := s.repo.DeleteSecrets(ctx, userID, toDelete); err != nil {
+			return nil, err
+		}
+	}
+
+	var updated, skipped []string
+	if len(toUpsert) > 0 {
+		var err error
+		updated, skipped, err = s.repo.UpsertIfNewer(ctx, userID, toUpsert)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	newerSecrets, err := s.repo.GetNewerSecrets(ctx, userID, clientVersions)
 	if err != nil {
 		return nil, err
 	}
 
-	if lastKnownVersion < currentVersion {
-		latest, err := s.repo.GetSecretsByUser(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"version": currentVersion, "secrets": latest}, nil
-	}
-
-	if err := s.repo.UpsertSecrets(ctx, userID, secrets); err != nil {
+	version, err := s.repo.GetMaxVersion(ctx, userID)
+	if err != nil {
 		return nil, err
 	}
 
-	return map[string]any{"version": lastKnownVersion, "secrets": secrets}, nil
+	return map[string]any{
+		"version": version,
+		"updated": updated,
+		"skipped": skipped,
+		"secrets": newerSecrets,
+	}, nil
 }
 
 // Delete removes the specified secrets for the user from the data store.

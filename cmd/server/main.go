@@ -5,10 +5,12 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"os"
+	"time"
 
 	nethttp "net/http"
 
@@ -47,14 +49,21 @@ func main() {
 	zapLogger := log.Log
 
 	// Initialize PostgreSQL connection.
-	db, err := db.InitPostgres(dbName)
+	postgressDB, err := db.InitPostgres(dbName)
 	if err != nil {
 		zapLogger.Fatal("cannot init database", zap.Error(err))
 	}
 
+	// Initialize PostgreSQL clean
+	db.StartSoftDeleteCleaner(context.Background(), postgressDB,
+		time.Hour,       // interval
+		30*24*time.Hour, // retention: 30 days
+		zapLogger,
+	)
+
 	// Initialize repositories for authentication and synchronization.
-	authRepo := repository.NewPostgresAuthService(db)
-	syncRepo := repository.NewPostgresSyncService(db)
+	authRepo := repository.NewPostgresAuthRepository(postgressDB)
+	syncRepo := repository.NewPostgresSyncRepostitory(postgressDB)
 
 	// Initialize business-logic services.
 	authService := service.NewAuthService(authRepo)

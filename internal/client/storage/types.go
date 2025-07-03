@@ -8,4 +8,5 @@ type Secret struct {
 	Data    string `json:"data"`    // base64-encoded encrypted payload
 	Comment string `json:"comment"` // user-provided note
 	Version int64  `json:"version"` // timestamp or sync version
+	Deleted bool   `json:"deleted,omitempty"`
 }

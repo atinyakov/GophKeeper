@@ -2,7 +2,6 @@ package service_test
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"testing"
 
@@ -11,13 +10,27 @@ import (
 )
 
 type mockRepo struct {
+	DeleteSecretsFunc    func(ctx context.Context, userID string, ids []string) error
+	GetSecretByIDFunc    func(ctx context.Context, userID, id string) (*models.Secret, error)
+	UpsertIfNewerFunc    func(ctx context.Context, userID string, secrets []models.Secret) ([]string, []string, error)
+	GetNewerSecretsFunc  func(ctx context.Context, userID string, versions map[string]int64) ([]models.Secret, error)
 	GetMaxVersionFunc    func(ctx context.Context, userID string) (int64, error)
 	GetSecretsByUserFunc func(ctx context.Context, userID string) ([]models.Secret, error)
 	UpsertSecretsFunc    func(ctx context.Context, userID string, secrets []models.Secret) error
-	DeleteSecretsFunc    func(ctx context.Context, userID string, ids []string) error
-	GetSecretByIDFunc    func(ctx context.Context, userID, id string) (*models.Secret, error)
 }
 
+func (m *mockRepo) DeleteSecrets(ctx context.Context, userID string, ids []string) error {
+	return m.DeleteSecretsFunc(ctx, userID, ids)
+}
+func (m *mockRepo) GetSecretByID(ctx context.Context, userID, id string) (*models.Secret, error) {
+	return m.GetSecretByIDFunc(ctx, userID, id)
+}
+func (m *mockRepo) UpsertIfNewer(ctx context.Context, userID string, secrets []models.Secret) ([]string, []string, error) {
+	return m.UpsertIfNewerFunc(ctx, userID, secrets)
+}
+func (m *mockRepo) GetNewerSecrets(ctx context.Context, userID string, versions map[string]int64) ([]models.Secret, error) {
+	return m.GetNewerSecretsFunc(ctx, userID, versions)
+}
 func (m *mockRepo) GetMaxVersion(ctx context.Context, userID string) (int64, error) {
 	return m.GetMaxVersionFunc(ctx, userID)
 }
@@ -27,119 +40,44 @@ func (m *mockRepo) GetSecretsByUser(ctx context.Context, userID string) ([]model
 func (m *mockRepo) UpsertSecrets(ctx context.Context, userID string, secrets []models.Secret) error {
 	return m.UpsertSecretsFunc(ctx, userID, secrets)
 }
-func (m *mockRepo) DeleteSecrets(ctx context.Context, userID string, ids []string) error {
-	return m.DeleteSecretsFunc(ctx, userID, ids)
-}
-func (m *mockRepo) GetSecretByID(ctx context.Context, userID, id string) (*models.Secret, error) {
-	return m.GetSecretByIDFunc(ctx, userID, id)
-}
 
-func TestSync_VersionError(t *testing.T) {
-	wantErr := errors.New("db down")
-	repo := &mockRepo{
-		GetMaxVersionFunc: func(context.Context, string) (int64, error) {
-			return 0, wantErr
-		},
-	}
-	svc := service.NewSyncService(repo)
-	_, err := svc.Sync(context.Background(), "u1", nil, 0)
-	if err != wantErr {
-		t.Fatalf("Sync error = %v; want %v", err, wantErr)
-	}
-}
+func TestSync_FullSync(t *testing.T) {
+	syncSecrets := []models.Secret{{ID: "s1", Type: "t", Data: "d", Comment: "c", Version: 2}}
+	clientVersions := map[string]int64{"s1": 1, "s2": 2}
+	updated := []models.Secret{{ID: "s1", Type: "t", Data: "d2", Comment: "c", Version: 2}}
 
-func TestSync_FetchLatestError(t *testing.T) {
-	wantErr := errors.New("fetch failed")
 	repo := &mockRepo{
-		GetMaxVersionFunc: func(context.Context, string) (int64, error) {
-			return 5, nil
+		UpsertIfNewerFunc: func(ctx context.Context, userID string, secrets []models.Secret) ([]string, []string, error) {
+			return []string{"s1"}, nil, nil
 		},
-		GetSecretsByUserFunc: func(context.Context, string) ([]models.Secret, error) {
-			return nil, wantErr
+		GetNewerSecretsFunc: func(ctx context.Context, userID string, versions map[string]int64) ([]models.Secret, error) {
+			if !reflect.DeepEqual(versions, clientVersions) {
+				t.Errorf("GetNewerSecrets versions = %+v; want %+v", versions, clientVersions)
+			}
+			return updated, nil
 		},
-	}
-	svc := service.NewSyncService(repo)
-	_, err := svc.Sync(context.Background(), "u1", nil, 2)
-	if err != wantErr {
-		t.Fatalf("Sync error = %v; want %v", err, wantErr)
-	}
-}
-
-func TestSync_FetchLatestSuccess(t *testing.T) {
-	latest := []models.Secret{
-		{ID: "s1", Type: "t1", Data: "d1", Comment: "c1", Version: 7},
-	}
-	repo := &mockRepo{
-		GetMaxVersionFunc: func(context.Context, string) (int64, error) {
-			return 7, nil
-		},
-		GetSecretsByUserFunc: func(context.Context, string) ([]models.Secret, error) {
-			return latest, nil
-		},
-	}
-	svc := service.NewSyncService(repo)
-	out, err := svc.Sync(context.Background(), "u1", []models.Secret{{ID: "ignored"}}, 3)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if gotV, wantV := out["version"].(int64), int64(7); gotV != wantV {
-		t.Errorf("version = %v; want %v", gotV, wantV)
-	}
-	if gotS, wantS := out["secrets"].([]models.Secret), latest; !reflect.DeepEqual(gotS, wantS) {
-		t.Errorf("secrets = %+v; want %+v", gotS, wantS)
-	}
-}
-
-func TestSync_UpsertError(t *testing.T) {
-	wantErr := errors.New("upsert failed")
-	repo := &mockRepo{
-		GetMaxVersionFunc: func(context.Context, string) (int64, error) {
+		GetMaxVersionFunc: func(ctx context.Context, userID string) (int64, error) {
 			return 2, nil
 		},
-		UpsertSecretsFunc: func(context.Context, string, []models.Secret) error {
-			return wantErr
-		},
-	}
-	svc := service.NewSyncService(repo)
-	_, err := svc.Sync(context.Background(), "u1", []models.Secret{{ID: "sX"}}, 2)
-	if err != wantErr {
-		t.Fatalf("Sync error = %v; want %v", err, wantErr)
-	}
-}
-
-func TestSync_UpsertSuccess(t *testing.T) {
-	input := []models.Secret{
-		{ID: "s2", Type: "t2", Data: "d2", Comment: "c2", Version: 9},
-	}
-	called := false
-	repo := &mockRepo{
-		GetMaxVersionFunc: func(context.Context, string) (int64, error) {
-			return 9, nil
+		GetSecretsByUserFunc: func(ctx context.Context, userID string) ([]models.Secret, error) {
+			return nil, nil
 		},
 		UpsertSecretsFunc: func(ctx context.Context, userID string, secrets []models.Secret) error {
-			called = true
-			if userID != "u1" {
-				t.Errorf("UpsertSecrets userID = %q; want u1", userID)
-			}
-			if !reflect.DeepEqual(secrets, input) {
-				t.Errorf("UpsertSecrets secrets = %+v; want %+v", secrets, input)
-			}
 			return nil
 		},
 	}
 	svc := service.NewSyncService(repo)
-	out, err := svc.Sync(context.Background(), "u1", input, 9)
+
+	res, err := svc.Sync(context.Background(), "u1", syncSecrets, clientVersions)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !called {
-		t.Fatal("expected UpsertSecrets to be called")
+
+	if got, want := res["version"].(int64), int64(2); got != want {
+		t.Errorf("version = %v; want %v", got, want)
 	}
-	if gotV := out["version"].(int64); gotV != 9 {
-		t.Errorf("version = %v; want %v", gotV, 9)
-	}
-	if gotS, wantS := out["secrets"].([]models.Secret), input; !reflect.DeepEqual(gotS, wantS) {
-		t.Errorf("secrets = %+v; want %+v", gotS, wantS)
+	if got, want := res["secrets"].([]models.Secret), updated; !reflect.DeepEqual(got, want) {
+		t.Errorf("secrets = %+v; want %+v", got, want)
 	}
 }
 
@@ -155,6 +93,9 @@ func TestDelete(t *testing.T) {
 			if !reflect.DeepEqual(in, ids) {
 				t.Errorf("DeleteSecrets ids = %v; want %v", in, ids)
 			}
+			return nil
+		},
+		UpsertSecretsFunc: func(ctx context.Context, userID string, secrets []models.Secret) error {
 			return nil
 		},
 	}
@@ -175,6 +116,9 @@ func TestGetByID(t *testing.T) {
 				t.Errorf("GetSecretByIDArgs = %q, %q; want u7, xx", userID, id)
 			}
 			return want, nil
+		},
+		UpsertSecretsFunc: func(ctx context.Context, userID string, secrets []models.Secret) error {
+			return nil
 		},
 	}
 	svc := service.NewSyncService(repo)

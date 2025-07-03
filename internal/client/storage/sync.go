@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -35,33 +37,24 @@ func SyncWithServer(client *http.Client, baseURL string, ls *LocalStorage) error
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server error: %s", strings.TrimSpace(string(data)))
+	}
+
 	var result struct {
 		Secrets []Secret `json:"secrets"`
 		Version int64    `json:"version"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return err
+		return fmt.Errorf("invalid response: %w", err)
 	}
 
 	ls.mu.Lock()
-	for _, s := range result.Secrets {
-		found := false
-		for i := range ls.Secrets {
-			if ls.Secrets[i].ID == s.ID {
-				if s.Version > ls.Secrets[i].Version {
-					ls.Secrets[i] = s
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
-			ls.Secrets = append(ls.Secrets, s)
-		}
-	}
+	ls.Secrets = make([]Secret, len(result.Secrets))
+	copy(ls.Secrets, result.Secrets)
 	ls.Version = result.Version
 	ls.mu.Unlock()
 
-	fmt.Println("Sync successful")
 	return ls.Save()
 }
