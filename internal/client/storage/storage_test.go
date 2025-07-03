@@ -10,15 +10,15 @@ import (
 	"time"
 )
 
-// fakeAEAD is a dummy AEAD that returns plaintext as-is and never errors.
-type fakeAEAD struct{}
+// fakeAEADStorage is a dummy AEAD that returns plaintext as-is and never errors.
+type fakeAEADStorage struct{}
 
-func (f fakeAEAD) NonceSize() int { return 12 }
-func (f fakeAEAD) Overhead() int  { return 0 }
-func (f fakeAEAD) Seal(dst, nonce, plaintext, aad []byte) []byte {
+func (f fakeAEADStorage) NonceSize() int { return 12 }
+func (f fakeAEADStorage) Overhead() int  { return 0 }
+func (f fakeAEADStorage) Seal(dst, nonce, plaintext, aad []byte) []byte {
 	return append(dst, plaintext...)
 }
-func (f fakeAEAD) Open(dst, nonce, ciphertext, aad []byte) ([]byte, error) {
+func (f fakeAEADStorage) Open(dst, nonce, ciphertext, aad []byte) ([]byte, error) {
 	return append(dst, ciphertext...), nil
 }
 
@@ -80,7 +80,7 @@ func TestSave(t *testing.T) {
 	if err := ls.Save(); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
-	// read back
+
 	buf, err := os.ReadFile(storageFile)
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
@@ -119,12 +119,11 @@ func TestAddGetDelete(t *testing.T) {
 }
 
 func TestEditAndList(t *testing.T) {
-	// prepare fake AEAD and storage
+
 	ls := &LocalStorage{deleted: make(map[string]bool)}
-	aead := fakeAEAD{}
+	aead := fakeAEADPromt{}
 	nonce := make([]byte, aead.NonceSize())
 
-	// add secret with plaintext "hello"
 	plain := []byte("hello")
 	cipherData := aead.Seal(nonce, nonce, plain, nil)
 	ls.Add(Secret{
@@ -135,21 +134,17 @@ func TestEditAndList(t *testing.T) {
 		Version: 1,
 	})
 
-	// capture stdout
 	orig := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	// perform edit — now passing []byte for rawData
 	timeBefore := time.Now().Unix()
 	if !ls.Edit("1", []byte("world"), "newc", aead) {
 		t.Fatal("Edit failed")
 	}
 
-	// list to stdout
 	ls.List(aead)
 
-	// restore and read
 	w.Close()
 	os.Stdout = orig
 	out, _ := io.ReadAll(r)
@@ -159,7 +154,6 @@ func TestEditAndList(t *testing.T) {
 		t.Errorf("List output missing edited data: %q", output)
 	}
 
-	// verify comment and version updated
 	sec := ls.Get("1")
 	if sec == nil {
 		t.Fatal("Get returned nil after edit")

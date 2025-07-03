@@ -99,6 +99,11 @@ func (ls *LocalStorage) Get(id string) *Secret {
 func (ls *LocalStorage) Delete(id string) bool {
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
+
+	if ls.deleted == nil {
+		ls.deleted = make(map[string]bool)
+	}
+
 	for i, s := range ls.Secrets {
 		if s.ID == id && !s.Deleted {
 			ls.Secrets[i].Deleted = true

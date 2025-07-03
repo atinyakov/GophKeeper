@@ -84,7 +84,7 @@ func TestRegisterUser_Success(t *testing.T) {
 	defer cleanup()
 
 	login := "newuser"
-	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO users (login) VALUES ($1) ON CONFLICT DO NOTHING`)).
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO users (login) VALUES ($1)`)).
 		WithArgs(login).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -102,7 +102,7 @@ func TestRegisterUser_Error(t *testing.T) {
 	defer cleanup()
 
 	login := "dupuser"
-	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO users (login) VALUES ($1) ON CONFLICT DO NOTHING`)).
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO users (login) VALUES ($1)`)).
 		WithArgs(login).
 		WillReturnError(errors.New("insert failed"))
 
